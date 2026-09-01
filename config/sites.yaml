@@ -1,0 +1,4 @@
+# 爬取站点列表（仅需 name，URL/解析逻辑在对应 spider 中）
+sites:
+  # TechCrunch AI 新闻
+  - name: "techcrunch"

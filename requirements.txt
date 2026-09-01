@@ -1,0 +1,23 @@
+# Core
+scrapling>=0.4.0
+curl_cffi>=0.16
+psycopg2-binary>=2.9
+asyncpg>=0.30
+playwright>=1.40
+patchright>=1.40
+browserforge>=1.2
+pyyaml>=6.0
+loguru>=0.7
+python-dotenv>=1.0
+
+# Scheduling (local)
+apscheduler>=3.10
+
+# Async HTTP
+aiohttp>=3.9
+
+# Testing
+pytest>=8.0
+
+# Translation (optional)
+tencentcloud-sdk-python>=3.0
