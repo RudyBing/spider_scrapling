@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS spider_news (
     sentiment VARCHAR(10) NOT NULL DEFAULT 'neutral',
     hotness INT NOT NULL DEFAULT 50,
     language VARCHAR(16) NOT NULL DEFAULT 'en',
-    is_published BOOLEAN NOT NULL DEFAULT TRUE,
+    is_published BOOLEAN NOT NULL DEFAULT FALSE,
     priority INT NOT NULL DEFAULT 0,
     translated_at TIMESTAMP,
     translate_service VARCHAR(64),
@@ -265,24 +265,22 @@ async def insert_news(conn, news: dict):
         if existing:
             await conn.execute("""
                 UPDATE spider_news SET 
-                    title = ?, title_cn = ?, content = ?, content_cn = ?,
-                    published_at = ?, category = ?, tags = ?, related_models = ?,
-                    sentiment = ?, hotness = ?, language = ?, updated_at = CURRENT_TIMESTAMP
+                    title = ?, content = ?, 
+                    category = ?, tags = ?, related_models = ?, sentiment = ?, 
+                    hotness = ?, language = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE original_url = ?
-            """, news.get("title"), news.get("title_cn"), news.get("content"),
-                news.get("content_cn"), news.get("published_at"),
+            """, news.get("title"), news.get("content"), 
                 news.get("category", "行业动态"), tags_val, related_val,
                 news.get("sentiment", "neutral"), news.get("hotness", 50),
                 news.get("language", "en"), news["original_url"])
         else:
             await conn.execute("""
                 INSERT INTO spider_news (
-                    id, slug, title, title_cn, content, content_cn,
-                    source, original_url, published_at, category,
-                    tags, related_models, sentiment, hotness, language
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, news.get("id"), news.get("slug"), news.get("title"),
-                news.get("title_cn"), news.get("content"), news.get("content_cn"),
+                    id, slug, title, content, source, original_url, 
+                    published_at, category, tags, related_models,
+                    sentiment, hotness, language
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, news.get("id"), news.get("slug"), news.get("title"), news.get("content"), 
                 news.get("source"), news["original_url"], news.get("published_at"),
                 news.get("category", "行业动态"), tags_val, related_val,
                 news.get("sentiment", "neutral"), news.get("hotness", 50),
@@ -290,15 +288,13 @@ async def insert_news(conn, news: dict):
     else:
         await conn.execute("""
             INSERT INTO spider_news (
-                id, slug, title, title_cn, content, content_cn,
+                id, slug, title, content,
                 source, original_url, published_at, category,
                 tags, related_models, sentiment, hotness, language
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             ON CONFLICT (original_url) DO UPDATE SET
                 title = EXCLUDED.title,
-                title_cn = EXCLUDED.title_cn,
                 content = EXCLUDED.content,
-                content_cn = EXCLUDED.content_cn,
                 published_at = EXCLUDED.published_at,
                 category = EXCLUDED.category,
                 tags = EXCLUDED.tags,
@@ -307,8 +303,7 @@ async def insert_news(conn, news: dict):
                 hotness = EXCLUDED.hotness,
                 language = EXCLUDED.language,
                 updated_at = CURRENT_TIMESTAMP
-        """, news.get("id"), news.get("slug"), news.get("title"),
-            news.get("title_cn"), news.get("content"), news.get("content_cn"),
+        """, news.get("id"), news.get("slug"), news.get("title"), news.get("content"), 
             news.get("source"), news["original_url"], news.get("published_at"),
             news.get("category", "行业动态"), tags_val, related_val,
             news.get("sentiment", "neutral"), news.get("hotness", 50),
@@ -323,6 +318,7 @@ async def update_news_translation(conn, news_id: str, title_cn: str, content_cn:
             UPDATE spider_news SET
                 title_cn = ?,
                 content_cn = ?,
+                is_published = TRUE,
                 translated_at = CURRENT_TIMESTAMP,
                 translate_service = ?,
                 updated_at = CURRENT_TIMESTAMP
@@ -333,8 +329,154 @@ async def update_news_translation(conn, news_id: str, title_cn: str, content_cn:
             UPDATE spider_news SET
                 title_cn = $1,
                 content_cn = $2,
+                is_published = TRUE,
                 translated_at = CURRENT_TIMESTAMP,
                 translate_service = $3,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $4
         """, title_cn, content_cn, translate_service, news_id)
+
+
+# ==================== spider_ai_models 表操作函数 ====================
+async def insert_ai_model(conn, model: dict):
+    """插入或更新 AI 模型数据到 spider_ai_models 表
+    
+    Args:
+        conn: 数据库连接
+        model: AI 模型数据字典，包含以下字段：
+            - id: 模型 ID（如 'gpt-4'）
+            - name: 模型名称
+            - slug: URL 友好的标识符
+            - provider: 提供商名称
+            - logo: Logo URL（可为空）
+            - description: 描述（留空，等 AI 生成）
+            - category: 类别
+            - pricing_input: 输入价格
+            - pricing_output: 输出价格
+            - pricing_unit: 价格单位
+            - context_window: 上下文窗口
+            - multimodal: 是否多模态
+            - strengths: 优势列表（留空，等 AI 生成）
+            - benchmark_score: 基准分数（可为 None）
+            - released: 发布日期（可为 None）
+            - url: 官方 URL
+            - free_tier: 免费层级信息
+            - updated_at: 更新时间
+    """
+    import json
+    
+    # 处理 strengths 字段（数组转 JSON 字符串）
+    strengths_val = model.get("strengths", [])
+    if _USE_SQLITE:
+        if isinstance(strengths_val, list):
+            strengths_val = json.dumps(strengths_val, ensure_ascii=False)
+    
+    if _USE_SQLITE:
+        # SQLite 实现
+        existing = await conn.fetchrow(
+            "SELECT id FROM spider_ai_models WHERE id = ? OR slug = ?",
+            model.get("id"), model.get("slug")
+        )
+        if existing:
+            # 更新已存在的模型
+            await conn.execute("""
+                UPDATE spider_ai_models SET
+                    id = ?, name = ?, slug = ?, provider = ?, logo = ?,
+                    description = ?, category = ?, pricing_input = ?,
+                    pricing_output = ?, pricing_unit = ?, context_window = ?,
+                    multimodal = ?, strengths = ?, benchmark_score = ?,
+                    released = ?, url = ?, free_tier = ?,
+                    updated_at = ?
+                WHERE id = ? OR slug = ?
+            """, model.get("id"), model.get("name"), model.get("slug"), model.get("provider"),
+                model.get("logo", ""), model.get("description", ""),
+                model.get("category"), model.get("pricing_input"),
+                model.get("pricing_output"), model.get("pricing_unit", ""),
+                model.get("context_window"), model.get("multimodal", False),
+                strengths_val, model.get("benchmark_score"),
+                model.get("released"), model.get("url", ""),
+                model.get("free_tier", ""), model.get("updated_at"),
+                model.get("id"), model.get("slug"))
+        else:
+            # 插入新模型
+            await conn.execute("""
+                INSERT INTO spider_ai_models (
+                    id, name, slug, provider, logo, description,
+                    category, pricing_input, pricing_output, pricing_unit,
+                    context_window, multimodal, strengths, benchmark_score,
+                    released, url, free_tier, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, model.get("id"), model.get("name"), model.get("slug"),
+                model.get("provider"), model.get("logo", ""),
+                model.get("description", ""), model.get("category"),
+                model.get("pricing_input"), model.get("pricing_output"),
+                model.get("pricing_unit", ""), model.get("context_window"),
+                model.get("multimodal", False), strengths_val,
+                model.get("benchmark_score"), model.get("released"),
+                model.get("url", ""), model.get("free_tier", ""),
+                model.get("updated_at"))
+    else:
+        # PostgreSQL 实现
+        # 先查询是否已存在（按 id 或 slug）
+        existing = await conn.fetchrow(
+            "SELECT id FROM spider_ai_models WHERE id = $1 OR slug = $2",
+            model.get("id"), model.get("slug")
+        )
+        if existing:
+            # 更新已存在的记录
+            await conn.execute("""
+                UPDATE spider_ai_models SET
+                    name = $1, slug = $2, provider = $3, logo = $4,
+                    description = $5, category = $6, pricing_input = $7,
+                    pricing_output = $8, pricing_unit = $9, context_window = $10,
+                    multimodal = $11, strengths = $12, benchmark_score = $13,
+                    released = $14, url = $15, free_tier = $16,
+                    updated_at = $17
+                WHERE id = $18 OR slug = $19
+            """, model.get("name"), model.get("slug"), model.get("provider"),
+                model.get("logo", ""), model.get("description", ""),
+                model.get("category"), model.get("pricing_input"),
+                model.get("pricing_output"), model.get("pricing_unit", ""),
+                model.get("context_window"), model.get("multimodal", False),
+                strengths_val, model.get("benchmark_score"),
+                model.get("released"), model.get("url", ""),
+                model.get("free_tier", ""), model.get("updated_at"),
+                model.get("id"), model.get("slug"))
+        else:
+            # 插入新记录
+            await conn.execute("""
+                INSERT INTO spider_ai_models (
+                    id, name, slug, provider, logo, description,
+                    category, pricing_input, pricing_output, pricing_unit,
+                    context_window, multimodal, strengths, benchmark_score,
+                    released, url, free_tier, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                ON CONFLICT (slug) DO UPDATE SET
+                    id = EXCLUDED.id,
+                    name = EXCLUDED.name,
+                    slug = EXCLUDED.slug,
+                    provider = EXCLUDED.provider,
+                    logo = EXCLUDED.logo,
+                    description = EXCLUDED.description,
+                    category = EXCLUDED.category,
+                    pricing_input = EXCLUDED.pricing_input,
+                    pricing_output = EXCLUDED.pricing_output,
+                    pricing_unit = EXCLUDED.pricing_unit,
+                    context_window = EXCLUDED.context_window,
+                    multimodal = EXCLUDED.multimodal,
+                    strengths = EXCLUDED.strengths,
+                    benchmark_score = EXCLUDED.benchmark_score,
+                    released = EXCLUDED.released,
+                    url = EXCLUDED.url,
+                    free_tier = EXCLUDED.free_tier,
+                    updated_at = EXCLUDED.updated_at
+            """, model.get("id"), model.get("name"), model.get("slug"),
+                model.get("provider"), model.get("logo", ""),
+                model.get("description", ""), model.get("category"),
+                model.get("pricing_input"), model.get("pricing_output"),
+                model.get("pricing_unit", ""), model.get("context_window"),
+                model.get("multimodal", False), strengths_val,
+                model.get("benchmark_score"), model.get("released"),
+                model.get("url", ""), model.get("free_tier", ""),
+                model.get("updated_at"))
+

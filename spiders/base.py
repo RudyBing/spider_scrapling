@@ -104,11 +104,24 @@ class SpiderBase(ABC):
 
     def _fetch_requests(self, url: str, headers: dict = None) -> str | None:
         """使用 requests 库发起请求，适用于 API/JSON 接口。
-        失败时自动回退到普通 Fetcher。
+        失败时重试 3 次，如果都失败则报错，不回退到 Fetcher。
         """
-        try:
-            resp = sync_requests.get(url, headers=headers or self.headers, timeout=15)
-            return resp.text
-        except Exception as e:
-            logger.warning(f"[{self.name}] requests 请求失败 ({e})，回退 Fetcher")
-            return self._fetch_http(url, headers)
+        max_retries = 3
+        last_error = None
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = sync_requests.get(url, headers=headers or self.headers, timeout=15)
+                return resp.text
+            except Exception as e:
+                last_error = e
+                logger.warning(f"[{self.name}] requests 请求失败 (第 {attempt}/{max_retries} 次): {e}")
+                if attempt < max_retries:
+                    # 等待短暂延迟后重试
+                    import time
+                    time.sleep(0.5 * attempt)  # 指数退避：0.5s, 1.0s, 1.5s
+        
+        # 3 次都失败，报错并不再回退
+        logger.error(f"[{self.name}] requests 请求失败，已重试 {max_retries} 次: {last_error}")
+        return None
+

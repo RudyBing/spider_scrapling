@@ -1,4 +1,8 @@
 # 爬取站点列表（仅需 name，URL/解析逻辑在对应 spider 中）
 sites:
+  # LiteLLM AI 模型数据
+  - name: "litellm"
   # TechCrunch AI 新闻
   - name: "techcrunch"
+  # MIT Technology Review 新闻
+  - name: "technologyreview"

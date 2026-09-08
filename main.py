@@ -2,9 +2,10 @@
 """爬虫系统入口
 
 用法:
-    python main.py              # 单次运行（仅爬虫）
-    python main.py --translate  # 爬虫 + 翻译
-    python main.py --schedule   # 定时调度模式
+    python main.py                  # 单次运行（仅爬虫）
+    python main.py --translate      # 爬虫 + 翻译
+    python main.py --ai-generate    # 爬虫 + 翻译 + AI 生成
+    python main.py --schedule       # 定时调度模式
 """
 import sys
 import os
@@ -17,11 +18,12 @@ from loguru import logger
 from scheduler.dispatcher import Crawler
 
 
-def run_once(with_translate: bool = False):
+def run_once(with_translate: bool = False, with_ai_generate: bool = False):
     """单次执行（供 GitHub Actions 调用）
     
     Args:
         with_translate: 是否在执行爬虫后运行翻译任务
+        with_ai_generate: 是否在执行爬虫后运行 AI 生成任务
     """
     logger.info("=== 爬虫启动（单次运行） ===")
     crawler = Crawler()
@@ -40,12 +42,24 @@ def run_once(with_translate: bool = False):
             logger.error(f"翻译失败：{result['error']}")
         else:
             logger.info("没有待翻译的新闻")
+    
+    if with_ai_generate:
+        logger.info("=== 开始执行 AI 生成任务 ===")
+        from services.ai_generate_service import run_ai_generate_task
+        result = asyncio.run(run_ai_generate_task(limit=100))
+        if result.get("success", 0) > 0:
+            logger.info(f"✅ AI 生成完成：成功 {result['success']} 个")
+        elif result.get("error"):
+            logger.error(f"AI 生成失败：{result['error']}")
+        else:
+            logger.info("没有待处理的模型")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Scrapling 爬虫系统")
     parser.add_argument("--schedule", action="store_true", help="定时调度模式")
     parser.add_argument("--translate", action="store_true", help="爬虫运行后执行翻译任务")
+    parser.add_argument("--ai-generate", action="store_true", help="爬虫运行后执行 AI 生成任务（自动包含翻译）")
     args = parser.parse_args()
 
     logger.add(
@@ -72,7 +86,7 @@ def main():
 
         scheduler = AsyncIOScheduler()
         scheduler.add_job(
-            lambda: run_once(with_translate=args.translate),
+            lambda: run_once(with_translate=args.translate, with_ai_generate=args.ai_generate),
             trigger=CronTrigger(
                 hour=int(parts[1]),
                 minute=int(parts[0]),
@@ -93,7 +107,7 @@ def main():
             logger.info("调度器停止")
             scheduler.shutdown()
     else:
-        run_once(with_translate=args.translate)
+        run_once(with_translate=args.translate, with_ai_generate=args.ai_generate)
 
 
 if __name__ == "__main__":

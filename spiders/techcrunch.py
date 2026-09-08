@@ -7,7 +7,7 @@ from services.news_analyzer import NewsAnalyzer
 from loguru import logger
 from scrapling import Selector
 from .base import SpiderBase
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 
 
@@ -19,7 +19,7 @@ class TechCrunchSpider(SpiderBase):
     start_urls = [
         "https://techcrunch.com/category/artificial-intelligence/",
     ]
-    max_page = 3
+    max_page = 10
     
     async def parse(self, url: str) -> dict | None:
         """解析新闻详情页，返回新闻数据字典"""
@@ -49,19 +49,15 @@ class TechCrunchSpider(SpiderBase):
             "id": news_id,
             "slug": slug,
             "title": title,
-            "title_cn": None,
             "content": content,
-            "content_cn": None,
-            "source": "techcrunch",
+            "source": self.name,
             "original_url": url,
             "published_at": publish_time,
             "category": "行业动态",
             "tags": topic_list,
-            "related_models": None,
             "sentiment": "neutral",
             "hotness": 50,
             "language": "en",
-            "is_published": False
         }
         # 立即分析新闻（热度计算、情感分析、自动分类、模型提取）
         analysis_result = NewsAnalyzer.analyze(news_data)
@@ -81,7 +77,6 @@ class TechCrunchSpider(SpiderBase):
         current_url = self.start_urls[0]
         page_num = 1
         all_news = []
-
         while current_url:
             logger.info(f"[{self.name}] 第 {page_num} 页：{current_url}")
             html = await self.fetch(current_url)
@@ -99,6 +94,11 @@ class TechCrunchSpider(SpiderBase):
                 news_data = await self.parse(news_url)
                 if news_data:
                     all_news.append(news_data)
+                    end_date = (datetime.now()-timedelta(days=30)).strftime("%Y-%m-%d")
+                    if str(news_data['published_at']) < str(end_date):
+                        logger.info(f"page {page_num} parse news published_at = {news_data['published_at']}")
+                        logger.info(f"[{self.name}] 共抓取 {len(all_news)} 条新闻，已分析完成")
+                        return all_news
             
             if page_num >= self.max_page:
                 logger.warning(f"[{self.name}] 已达最大页数限制，停止")

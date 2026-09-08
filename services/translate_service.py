@@ -20,6 +20,7 @@ class TranslateService:
         news_id: str,
         title: str,
         content: str = "",
+        language: str = "en",
         source_lang: str = "en",
         target_lang: str = "zh"
     ) -> dict:
@@ -29,6 +30,7 @@ class TranslateService:
             news_id: 新闻 ID
             title: 新闻标题
             content: 新闻内容
+            language: 新闻语言 (en 或 zh)
             source_lang: 源语言
             target_lang: 目标语言
         
@@ -36,6 +38,14 @@ class TranslateService:
             dict: 翻译后的数据
         """
         try:
+            # 如果是中文，直接返回原文
+            if language == "zh":
+                return {
+                    "title_cn": title,
+                    "content_cn": content if content and content.strip() else None,
+                    "language": target_lang,
+                    "translate_service": "原文",
+                }
             # 翻译标题
             title_result = await self.translator.translate(title, source_lang, target_lang)
             
@@ -62,7 +72,63 @@ class TranslateService:
                 "title_cn": None,
                 "content_cn": None,
             }
-    
+
+    async def translate_batch_news_with_lang(
+        self,
+        news_list: list[dict],
+        source_lang: str = "en",
+        target_lang: str = "zh",
+        max_concurrent: int = 3
+    ) -> tuple[int, int]:
+        """批量翻译新闻（支持每条新闻有自己的 language 字段）
+        
+        Args:
+            news_list: 新闻列表，每项包含 id, title, content, language
+            source_lang: 源语言
+            target_lang: 目标语言
+            max_concurrent: 最大并发数
+        
+        Returns:
+            tuple[int, int]: (成功数量，失败数量)
+        """
+        logger.info(f"开始批量翻译 {len(news_list)} 条新闻")
+        
+        semaphore = asyncio.Semaphore(max_concurrent)
+        success_count = 0
+        fail_count = 0
+        
+        async def translate_one(news: dict):
+            nonlocal success_count, fail_count
+            
+            async with semaphore:
+                try:
+                    result = await self.translate_news_item(
+                        news_id=news["id"],
+                        title=news["title"],
+                        content=news.get("content", ""),
+                        language=news.get("language", "en"),  # 使用新闻自身的 language
+                        source_lang=source_lang,
+                        target_lang=target_lang
+                    )
+                    
+                    # 更新数据库
+                    await self._update_news_translation(news["id"], result)
+                    success_count += 1
+                    logger.info(f"✅ {news['title'][:30]}... 翻译成功")
+                    
+                except Exception as e:
+                    logger.error(f"❌ {news['title'][:30]}... 翻译失败：{e}")
+                    fail_count += 1
+                
+                # 避免 API 限流
+                await asyncio.sleep(0.2)
+        
+        tasks = [translate_one(news) for news in news_list]
+        await asyncio.gather(*tasks)
+        
+        logger.info(f"批量翻译完成：成功 {success_count} 条，失败 {fail_count} 条")
+        return success_count, fail_count
+
     async def translate_batch_news(
         self,
         news_list: list[dict],
@@ -154,8 +220,7 @@ class TranslateService:
     
     async def get_untranslated_news(
         self,
-        limit: int = 100,
-        source_lang: str = "en"
+        limit: int = 100
     ) -> list[dict]:
         """获取未翻译的新闻
         
@@ -174,14 +239,12 @@ class TranslateService:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT id, title, content, original_url, published_at
+                SELECT id, title, content, original_url, published_at, language
                 FROM spider_news
-                WHERE language = $1
-                  AND (title_cn IS NULL OR content_cn IS NULL)
+                WHERE title_cn IS NULL OR content_cn IS NULL
                 ORDER BY published_at DESC
-                LIMIT $2
+                LIMIT $1
                 """,
-                source_lang,
                 limit
             )
             return rows
@@ -214,7 +277,7 @@ class TranslateService:
             return {"success": 0, "fail": 0, "error": "配置缺失"}
         
         # 获取未翻译的新闻
-        untranslated = await self.get_untranslated_news(limit, source_lang)
+        untranslated = await self.get_untranslated_news(limit)
         
         if not untranslated:
             logger.info("✅ 没有待翻译的新闻")
@@ -223,7 +286,7 @@ class TranslateService:
         logger.info(f"📋 待翻译新闻：{len(untranslated)} 条")
         
         # 执行批量翻译
-        success, fail = await self.translate_batch_news(
+        success, fail = await self.translate_batch_news_with_lang(
             untranslated,
             source_lang,
             target_lang,

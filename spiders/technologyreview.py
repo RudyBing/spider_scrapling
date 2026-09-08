@@ -7,7 +7,7 @@ from services.news_analyzer import NewsAnalyzer
 from loguru import logger
 from scrapling import Selector
 from .base import SpiderBase
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import json
 
@@ -37,7 +37,7 @@ class TechnologyReviewSpider(SpiderBase):
     start_urls = [
         "https://wp.technologyreview.com/wp-json/irving/v1/data/topic_feed?page=#page#&orderBy=date&topic=9&requestType=topic",
     ]
-    max_page = 1
+    max_page = 10
     async def parse(self, url: str) -> dict | None:
         """解析新闻详情页，返回新闻数据字典"""
         html = await self.fetch(url)
@@ -63,19 +63,14 @@ class TechnologyReviewSpider(SpiderBase):
             "id": news_id,
             "slug": slug,
             "title": title,
-            "title_cn": None,
             "content": content,
-            "content_cn": None,
             "source": self.name,
             "original_url": url,
             "published_at": publish_time,
             "category": "行业动态",
-            # "tags": topic_list,
-            "related_models": None,
             "sentiment": "neutral",
             "hotness": 50,
             "language": "en",
-            "is_published": False
         }
         # 立即分析新闻（热度计算、情感分析、自动分类、模型提取）
         analysis_result = NewsAnalyzer.analyze(news_data)
@@ -109,11 +104,14 @@ class TechnologyReviewSpider(SpiderBase):
                 logger.info(f"解析新闻：{news_url}")
                 news_data = await self.parse(news_url)
                 if news_data:
-                    print(news_data)
-                    return
-                    # all_news.append(news_data)
+                    all_news.append(news_data)
+                    end_date = (datetime.now()-timedelta(days=30)).strftime("%Y-%m-%d")
+                    if str(news_data['published_at']) < str(end_date):
+                        logger.info(f"page {page_num} parse news published_at = {news_data['published_at']}")
+                        logger.info(f"[{self.name}] 共抓取 {len(all_news)} 条新闻")
+                        return all_news
             logger.info(f"page {page_num} parse {len(news_list)} news")
-            if  page_num >= self.max_page:
+            if page_num >= self.max_page:
                 logger.warning(f"[{self.name}] 已达最大页数限制，停止")
                 break
             if not news_list:
