@@ -36,8 +36,8 @@ async def main():
     parser.add_argument(
         "--concurrent",
         type=int,
-        default=3,
-        help="最大并发数 (默认 3，避免 API 限流)"
+        default=1,
+        help="最大并发数 (默认 1，避免 API 限流)"
     )
     parser.add_argument(
         "--source-lang",

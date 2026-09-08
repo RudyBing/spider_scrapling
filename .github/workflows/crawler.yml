@@ -57,7 +57,7 @@ jobs:
           TENCENT_SECRET_KEY: ${{ secrets.TENCENT_SECRET_KEY }}
         run: |
           echo "=== 开始执行翻译任务 ==="
-          python scripts/translate_news.py --limit 100 --concurrent 5
+          python scripts/translate_news.py --limit 100 --concurrent 1
 
       - name: Run AI generate
         if: github.event.inputs.run_ai_generate != 'false'
