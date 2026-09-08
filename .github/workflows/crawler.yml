@@ -59,15 +59,15 @@ jobs:
           echo "=== 开始执行翻译任务 ==="
           python scripts/translate_news.py --limit 100 --concurrent 1
 
-      - name: Run AI generate
-        if: github.event.inputs.run_ai_generate != 'false'
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
-          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
-        run: |
-          echo "=== 开始执行 AI 生成描述任务 ==="
-          python scripts/run_ai_generate.py --limit 100
+      # - name: Run AI generate
+      #   if: github.event.inputs.run_ai_generate != 'false'
+      #   env:
+      #     DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      #     AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
+      #     GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+      #   run: |
+      #     echo "=== 开始执行 AI 生成描述任务 ==="
+      #     python scripts/run_ai_generate.py --limit 100
 
       - name: Upload logs (if failed)
         if: failure()

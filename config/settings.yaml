@@ -6,7 +6,7 @@ SCHEDULE_CRON: "0 3 * * *"
 
 # === 爬虫行为配置 ===
 # 并发请求数
-CONCURRENCY: 5
+CONCURRENCY: 1
 # 请求间隔（秒）
 REQUEST_DELAY: 2
 # 是否启用 StealthyFetcher 绕过反爬

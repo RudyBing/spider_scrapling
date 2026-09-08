@@ -19,6 +19,7 @@ AI 服务：Agnes 2.5 Flash (主) + GLM-4.7 Flash (备) 双保险
 import asyncio
 import os
 import re
+import json
 from datetime import datetime
 from loguru import logger
 from typing import Optional
@@ -92,17 +93,29 @@ def generate_prompt(model: dict) -> str:
 **任务**：
 1. **描述**（50-80 字）：简洁介绍模型定位、核心能力、适用场景
 2. **优势**（3-5 条）：列出该模型相比竞品的独特优势
+3. **benchmark_score**：该模型权威基准分数（MMLU、GPQA 等），无可靠数据则填 null
+4. **released**：发布日期，格式 YYYY-MM-DD，不确定则填 null
+5. **url**：该模型的官方介绍页 URL，尽量给官方域名，不确定则填空字符串
+6. **free_tier**：免费额度/免费层级说明，无免费则填 null
 
 **输出格式**（严格 JSON）：
 {{
   "description": "简短描述...",
-  "strengths": ["优势 1", "优势 2", "优势 3"]
+  "strengths": ["优势 1", "优势 2", "优势 3"],
+  "benchmark_score": 88.5,
+  "released": "2024-05-15",
+  "url": "https://official.example.com/model",
+  "free_tier": "每月 100 万 token 免费额度"
 }}
 
 **示例**：
 {{
   "description": "OpenAI 最新一代推理模型，在数学、科学和编程领域表现卓越，支持复杂的多步推理任务。",
-  "strengths": ["强大的推理能力", "优秀的数学和科学表现", "支持复杂任务分解"]
+  "strengths": ["强大的推理能力", "优秀的数学和科学表现", "支持复杂任务分解"],
+  "benchmark_score": 87.3,
+  "released": "2024-09-12",
+  "url": "https://openai.com/api/",
+  "free_tier": null
 }}"""
 
 
@@ -114,7 +127,7 @@ async def call_ai(prompt: str, service: AIService) -> dict:
         service: AI 服务配置
     
     Returns:
-        dict: 包含 description 和 strengths 的结果
+        dict: 包含 description、strengths、benchmark_score、released、url、free_tier 的结果
     """
     api_key = get_api_key(service)
     url = f"{service.base_url}/chat/completions"
@@ -156,10 +169,20 @@ async def call_ai(prompt: str, service: AIService) -> dict:
                 raise Exception(f"AI 返回格式错误：{content}")
             
             try:
-                result = eval(json_match.group())  # 使用 eval 处理可能的单引号 JSON
+                result_text = json_match.group()
+                try:
+                    # 首选标准 JSON 解析（正确处理 null/true/false）
+                    result = json.loads(result_text)
+                except json.JSONDecodeError:
+                    # 兼容 AI 返回单引号 JSON（将单引号替换为双引号后重试）
+                    result = json.loads(result_text.replace("'", '"'))
                 return {
                     "description": result.get("description", ""),
                     "strengths": result.get("strengths", []) if isinstance(result.get("strengths"), list) else [],
+                    "benchmark_score": result.get("benchmark_score"),
+                    "released": result.get("released"),
+                    "url": result.get("url", ""),
+                    "free_tier": result.get("free_tier", ""),
                 }
             except Exception as e:
                 raise Exception(f"JSON 解析失败：{content}, 错误：{e}")
@@ -249,13 +272,18 @@ class AIGenerateService:
             
             return models
     
-    async def update_model_description(self, model_id: str, description: str, strengths: list):
+    async def update_model_description(self, model_id: str, description: str, strengths: list,
+                                       released=None, benchmark_score=None, url="", free_tier=""):
         """更新模型描述和优势到数据库
         
         Args:
             model_id: 模型 ID
             description: 描述
             strengths: 优势列表
+            released: 发布日期
+            benchmark_score: 基准分数
+            url: 官方 URL
+            free_tier: 免费层级信息
         """
         pool = await get_pool()
         if pool is None:
@@ -269,11 +297,15 @@ class AIGenerateService:
                 UPDATE spider_ai_models SET
                     description = $1,
                     strengths = $2,
+                    benchmark_score = $3,
+                    released = $4,
+                    url = $5,
+                    free_tier = $6,
                     is_published = TRUE,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE id = $3
+                WHERE id = $7
                 """,
-                description, strengths, model_id
+                description, strengths, benchmark_score, released, url, free_tier, model_id
             )
     
     async def generate_batch(self, limit: int = 100) -> dict:
@@ -322,10 +354,15 @@ class AIGenerateService:
             
             if result:
                 # 更新数据库
+                print(result)
                 await self.update_model_description(
                     model["id"],
                     result["description"],
-                    result["strengths"]
+                    result["strengths"],
+                    released=result.get("released"),
+                    benchmark_score=result.get("benchmark_score"),
+                    url=result.get("url", ""),
+                    free_tier=result.get("free_tier", ""),
                 )
                 
                 success_count += 1
