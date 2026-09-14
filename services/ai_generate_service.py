@@ -95,16 +95,16 @@ def generate_prompt(model: dict) -> str:
 1. **描述**（50-80 字）：简洁介绍模型定位、核心能力、适用场景
 2. **优势**（3-5 条）：列出该模型相比竞品的独特优势
 3. **benchmark_score**：该模型权威基准分数（MMLU、GPQA 等），无可靠数据则填 null
-4. **released**：发布日期，格式 YYYY-MM-DD，不确定则填 null
-5. **free_tier**：免费额度/免费层级说明，无免费则填 null
+4. **released**：模型发布日期，格式 YYYY-MM-DD，不确定或无可靠数据则填 null
+5. **free_tier**：免费额度/免费层级说明，不确定或无可靠数据则填 null
 
 **输出格式**（严格 JSON）：
 {{
   "description": "简短描述...",
   "strengths": ["优势 1", "优势 2", "优势 3"],
-  "benchmark_score": 88.5,
-  "released": "2024-05-15",
-  "free_tier": "每月 100 万 token 免费额度"
+  "benchmark_score": xx.x,
+  "released": "20xx-xx-xx",
+  "free_tier": "每月 xx 万 token 免费额度"
 }}
 
 **示例**：
