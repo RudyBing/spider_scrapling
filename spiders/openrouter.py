@@ -138,8 +138,9 @@ class OpenRouterSpider(SpiderBase):
             if benchmarks.get("intelligence_index") is not None:
                 benchmark_score = benchmarks["intelligence_index"]
 
-            # description：OpenRouter 官方简介，直接入库（免 AI 生成）
-            description = record.get("description", "") or ""
+            # description：openrouter 提供的是英文简介，可能覆盖 litellm/AI 生成的中文描述
+            # 因此设为 None，由 AI 生成服务统一处理（保持中文一致性）
+            description = None
 
             # composite_score：从 openrouter 可用字段推导（coverage 固定 6 分）
             composite_score = self._compute_composite_score(record)

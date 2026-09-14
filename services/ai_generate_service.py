@@ -80,7 +80,8 @@ def generate_prompt(model: dict) -> str:
     pricing_output = model.get("pricing_output") or "未公开"
     multimodal = "支持" if model.get("multimodal", False) else "不支持"
     
-    return f"""你是一个 AI 模型专家，请为以下模型生成简短的中文介绍：
+    return f"""你是一个 AI 模型专家，请为以下模型生成简短的中文介绍。
+**重要：所有输出内容（description、strengths、free_tier）必须使用中文，禁止出现英文句子。**
 
 **模型信息**：
 - 名称：{model.get("name", "未知")}
@@ -141,7 +142,7 @@ async def call_ai(prompt: str, service: AIService) -> dict:
                 "messages": [
                     {
                         "role": "system",
-                        "content": "你是一个专业的 AI 模型分析师，擅长用简洁准确的语言描述模型特点。",
+                        "content": "你是一个专业的 AI 模型分析师，擅长用简洁准确的中文描述模型特点。【必须使用中文回答，禁止使用英文或其他语言】",
                     },
                     {
                         "role": "user",
@@ -251,7 +252,7 @@ class AIGenerateService:
                     benchmark_score, released, free_tier, updated_at
                 FROM spider_ai_models
                 WHERE description IS NULL OR description = ''
-                   OR strengths IS NULL OR strengths = '[]'::jsonb
+                   OR strengths IS NULL OR strengths = '{}'::text[]
                    OR array_length(strengths, 1) IS NULL
                 ORDER BY composite_score DESC
                 LIMIT $1
