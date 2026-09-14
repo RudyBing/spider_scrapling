@@ -4,15 +4,20 @@ from loguru import logger
 from config import load_settings, load_sites
 from storage.db import get_pool, insert_site, insert_news, insert_ai_model, update_last_crawled
 from spiders.litellm import SPIDER_REGISTRY as LLM_REGISTRY
+from spiders.openrouter import SPIDER_REGISTRY as OR_REGISTRY
 from spiders.techcrunch import SPIDER_REGISTRY as TC_REGISTRY
 from spiders.technologyreview import SPIDER_REGISTRY as TR_REGISTRY
 
 # 合并所有 spider registry
 SPIDER_REGISTRY = {
     **LLM_REGISTRY,
-    **TC_REGISTRY, 
+    **OR_REGISTRY,
+    **TC_REGISTRY,
     **TR_REGISTRY,
 }
+
+# AI 模型数据源（其数据入库到 spider_ai_models 表，而非 spider_news）
+AI_MODEL_SOURCES = ("litellm", "openrouter")
 
 
 class Crawler:
@@ -73,7 +78,7 @@ class Crawler:
                 "fetcher_type": spider.fetcher_type,
                 "schedule_interval": spider.schedule_interval,
             })
-            if name == "litellm":
+            if name in AI_MODEL_SOURCES:
             # AI 模型数据入库到 spider_ai_models 表
                 for item in items:
                     await insert_ai_model(conn, item)

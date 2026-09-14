@@ -11,6 +11,7 @@
 from loguru import logger
 from .base import SpiderBase
 import json
+import math
 import re
 from datetime import datetime
 
@@ -172,14 +173,128 @@ class LiteLLMSpider(SpiderBase):
         "Fireworks AI": {"pattern": "list", "base": "https://fireworks.ai"},
     }
 
+    # provider 兜底 URL 映射（当 PROVIDER_URL_MAP 和 PROVIDER_URL_FORMAT 均无匹配时使用）
+    PROVIDER_FALLBACK_URLS: dict[str, str] = {
+        # 大平台 / 云服务商
+        "Vercel Ai Gateway":       "https://sdk.vercel.ai/providers/community-providers",
+        "Gemini":                  "https://ai.google.dev/gemini-api/docs/models",
+        "Databricks":              "https://docs.databricks.com/en/generative-ai/external-models/index.html",
+        "Nebius":                  "https://docs.nebius.com/studio/models",
+        "Xai":                     "https://docs.x.ai/docs/models",
+        "Vertex Ai-Language-Models": "https://cloud.google.com/vertex-ai/generative-ai/docs/models",
+        "Vertex Ai-Anthropic Models": "https://cloud.google.com/vertex-ai/generative-ai/docs/models",
+        "Vertex Ai-Mistral Models":  "https://cloud.google.com/vertex-ai/generative-ai/docs/models",
+        "Vertex Ai-Llama Models":    "https://cloud.google.com/vertex-ai/generative-ai/docs/models",
+        "Vertex Ai-Embedding-Models": "https://cloud.google.com/vertex-ai/generative-ai/docs/models",
+        "Vertex Ai-Image-Models":    "https://cloud.google.com/vertex-ai/generative-ai/docs/models",
+        "Vertex Ai-Video-Models":    "https://cloud.google.com/vertex-ai/generative-ai/docs/models",
+        "Vertex Ai-Qwen Models":     "https://cloud.google.com/vertex-ai/generative-ai/docs/models",
+        "Vertex Ai-Deepseek Models": "https://cloud.google.com/vertex-ai/generative-ai/docs/models",
+        "Vertex Ai-Openai Models":   "https://cloud.google.com/vertex-ai/generative-ai/docs/models",
+        "Vertex Ai-Ai21 Models":     "https://cloud.google.com/vertex-ai/generative-ai/docs/models",
+        "Vertex Ai-Minimax Models":  "https://cloud.google.com/vertex-ai/generative-ai/docs/models",
+        "Vertex Ai-Moonshot Models": "https://cloud.google.com/vertex-ai/generative-ai/docs/models",
+        "Vertex Ai-Text-Models":     "https://cloud.google.com/vertex-ai/generative-ai/docs/models",
+        "Vertex Ai-Zai Models":      "https://cloud.google.com/vertex-ai/generative-ai/docs/models",
+        "Dashscope":               "https://help.aliyun.com/zh/model-studio/developer-reference/token-api",
+        "Qwencloud":               "https://help.aliyun.com/zh/model-studio/developer-reference/token-api",
+        "Qwen Ai Platform":        "https://help.aliyun.com/zh/model-studio/developer-reference/token-api",
+        "Oci":                     "https://docs.oracle.com/en-us/iaas/Content/AI/TF/home.htm",
+        "Snowflake":               "https://docs.snowflake.com/en/user-guide/snowflake-ai/framework-models",
+        "Wandb":                   "https://docs.wandb.ai/guides/prompts/library-providers",
+        "Deepgram":                "https://developers.deepgram.com/docs/models",
+        "Github Copilot":          "https://github.com/features/copilot",
+        "Anyscale":                "https://docs.endpoints.anyscale.com/",
+        "AI/ML":                   "https://deepinfra.com/models",
+        # 中小平台
+        "Cloudflare":              "https://developers.cloudflare.com/api/agents/large-language-models/",
+        "Watsonx":                 "https://www.ibm.com/products/watsonx-ai",
+        "Bedrock Mantle":          "https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html",
+        "Ollama":                  "https://ollama.com/library",
+        "Moonshot":                "https://platform.moonshot.cn/",
+        "Stability":               "https://platform.stability.ai/docs/api-reference",
+        "Lambda Ai":               "https://lambdalabs.com/",
+        "Scaleway":                "https://www.scaleway.com/en/docs/ai-data/studio/models/",
+        "Cohere Chat":             "https://docs.cohere.com/docs/models",
+        "Fireworks Ai-Embedding-Models": "https://fireworks.ai/models",
+        "Gigachat":                "https://developers.sber.ru/gigachat",
+        "Crusoe":                  "https://cloud.crusoe.com/",
+        "Elevenlabs":              "https://elevenlabs.io/",
+        "Lemonade":                "https://lemonade.ai/",
+        "Volcengine":              "https://www.volcengine.com/docs/6218",
+        "Baseten":                 "https://docs.baseten.ai/",
+        "Ai21":                    "https://docs.ai21.com/",
+        "Libertai":                "https://libertai.com/",
+        "Friendliai":              "https://friendliai.medium.com/",
+        "MiniMax":                 "https://www.minimaxi.com/",
+        "Tensormesh":              "https://tensormesh.com/",
+        "Cerebras":                "https://cerebras.ai/",
+        "Publicai":                "https://publicai.ai/",
+        "Black Forest Labs":       "https://blackforestlabs.ai/",
+        "Hyperbolic":              "https://hyperbolic.xyz/",
+        "Nscale":                  "https://nscale.ai/",
+        "Zai":                     "https://z.ai/",
+        "Llamagate":               "https://llamagate.com/",
+        "Ovhcloud":                "https://www.ovhcloud.com/",
+        "Chatgpt":                 "https://platform.openai.com/",
+        "Runwayml":                "https://runwayml.com/",
+        "Gradient Ai":             "https://gradient.ai/",
+        "Gmi":                     "https://gminference.com/",
+        "Pinstripes":              "https://pinstripes.ai/",
+        "Text-Completion-Openai":  "https://platform.openai.com/",
+        "Palm":                    "https://ai.google.dev/gemini-api/docs/models",
+        "Sagemaker":               "https://docs.aws.amazon.com/sagemaker/",
+        "Meta Llama":              "https://llama.meta.com/",
+        "Parallel Ai":             "https://parallel.ai/",
+        "Aws Polly":               "https://docs.aws.amazon.com/polly/",
+        "Azure Text":              "https://learn.microsoft.com/en-us/azure/ai-services/",
+        "Nvidia Nim":              "https://build.nvidia.com/",
+        "V0":                      "https://v0.ai/",
+        "Tencent":                 "https://cloud.tencent.com/document/product/1729",
+        "Cognition":               "https://cognition.ai/",
+        "Assemblyai":              "https://www.assemblyai.com/",
+        "Nlp Cloud":               "https://nlpcloud.io/",
+        "Codestral":               "https://console.mistral.ai/models/",
+        "Apiserpent":              "https://apiserpent.ai/",
+        "Featherless Ai":          "https://featherless.ai/",
+        "Inception":               "https://inception.ai/",
+        "Morph":                   "https://morph.sh/",
+        "Reducto":                 "https://reducto.ai/",
+        "Recraft":                 "https://www.recraft.ai/",
+        "Scx-Ai":                  "https://scx.ai/",
+        "Linkup":                  "https://linkup.ai/",
+        "Tavily":                  "https://tavily.com/",
+        "Text-Completion-Codestral": "https://console.mistral.ai/models/",
+        "Soniox":                  "https://soniox.com/",
+        "Darkbloom":               "https://darkbloom.ai/",
+        "Dataforseo":              "https://dataforseo.com/",
+        "Exa Ai":                  "https://exa.ai/",
+        "Firecrawl":               "https://firecrawl.dev/",
+        "Searxng":                 "https://searxng.org/",
+        "Serper":                  "https://serper.dev/",
+        "Agentcore":               "https://agentcore.ai/",
+        "Bing Grounding":          "https://www.bing.com/",
+        "Tinyfish":                "https://tinyfish.io/",
+        "Nimble":                  "https://nimble.ai/",
+        "Google Pse":              "https://programmablesearchengine.google.com/",
+        "Jina Ai":                 "https://jina.ai/",
+        "Text-Completion-Inception": "https://inception.ai/",
+        "You Com":                 "https://you.com/",
+        "Sarvam":                  "https://sarvam.ai/",
+        "Duckduckgo":              "https://duckduckgo.com/",
+        "Amazon Nova":             "https://docs.aws.amazon.com/bedrock/latest/userguide/models-unsupported.html",
+        "Heroku":                  "https://devcenter.heroku.com/articles/model-farm",
+    }
+
 
     async def crawl(self) -> list[dict]:
         """从 LiteLLM 采集 AI 模型数据
 
         流程：
         1. 从 LiteLLM GitHub 拉取 model_prices_and_context_window.json
-        2. 解析模型数据，转换为 spider_ai_models 表结构
-        3. description 和 strengths 留空，等后续 AI 生成
+        2. 全量预统计每个"基模型"被多少家提供商支持（用于 composite_score）
+        3. 解析模型数据，转换为 spider_ai_models 表结构
+        4. description 和 strengths 留空，等后续 AI 生成
 
         返回：
             list[dict]: 待入库的模型数据列表
@@ -198,26 +313,113 @@ class LiteLLMSpider(SpiderBase):
         model_count = len([k for k in json_data.keys() if k not in self.EXCLUDE_KEYS])
         logger.info(f"[{self.name}] ✅ 拉取成功，共 {model_count} 个模型条目")
 
-        # 2. 解析并转换数据
+        # 2. 全量预统计：每个"基模型"被多少家提供商支持（用于 composite_score）
+        provider_count_map = self._precompute_provider_count(json_data)
+
+        # 3. 解析并转换数据
         for model_key, model_data in json_data.items():
             # 跳过特殊键
             if model_key in self.EXCLUDE_KEYS:
                 continue
 
-            model = self._parse_model(model_key, model_data)
+            provider_count = provider_count_map.get(self._model_base_name(model_key), 1)
+            model = self._parse_model(model_key, model_data, provider_count)
             if model:
                 all_models.append(model)
-                print(model)
+                # print(model)
 
         logger.info(f"[{self.name}] 共抓取 {len(all_models)} 条 ai 模型，已分析完成")
         return all_models
 
-    def _parse_model(self, model_key: str, model_data: dict) -> dict | None:
+    def _model_base_name(self, model_key: str) -> str:
+        """从 model_key 提取"基模型"名称（剥离首段 provider 前缀）
+
+        例如 'azure/gpt-4o' -> 'gpt-4o'；'gpt-4o' -> 'gpt-4o'。
+        用于跨 provider 归并统计同一底层模型被多少家提供商支持。
+        """
+        if "/" in model_key:
+            return model_key.split("/", 1)[1]
+        return model_key
+
+    def _precompute_provider_count(self, json_data: dict) -> dict:
+        """全量预统计：每个基模型被多少家不同提供商支持
+
+        返回 dict[base_model_name -> int]，供 _parse_model 计算 composite_score 使用。
+        provider 以 litellm_provider 字段（或 model_key 兜底提取）为准。
+        """
+        base_providers: dict[str, set] = {}
+        for model_key, model_data in json_data.items():
+            if model_key in self.EXCLUDE_KEYS:
+                continue
+            base = self._model_base_name(model_key)
+            provider = self._extract_provider(model_key, model_data)
+            base_providers.setdefault(base, set()).add(provider)
+        return {base: len(providers) for base, providers in base_providers.items()}
+
+    def _compute_composite_score(self, model_data: dict, provider_count: int) -> int:
+        """计算模型综合评分（0-100 整数，clamp 到 [0,100]）
+
+        基于可获得的客观信号，从能力、覆盖面、可负担三个维度加权：
+        - context:    上下文长度（log2 对数尺度，最多 25 分，约 128k 接近满分）
+        - multimodal: 支持视觉/音频/视频输入（0-10 分）
+        - tool:       函数调用/tool_choice 二选一（8 分）+ 结构化输出（7 分），合计最高 15 分
+        - reasoning:  支持推理（0-10 分）
+        - coverage:   被多少家提供商支持（归一化 provider_count，最多 30 分）
+        - free:       按 token 计价且输入输出均为 0（0-10 分；图像/音频类模型不参与此项）
+        权重合计 100，避免任意无上界累加。
+        """
+        # context：log2(max_input_tokens) 对数缩放，17 -> 128k 取 0.85
+        max_tokens = model_data.get("max_input_tokens") or 0
+        context_pts = 0.0
+        if max_tokens and max_tokens > 0:
+            log_ctx = math.log2(max_tokens)
+            context_pts = min(log_ctx / 17.0, 1.0) * 25
+
+        # multimodal
+        multimodal_pts = 10.0 if (
+            model_data.get("supports_vision")
+            or model_data.get("supports_audio_input")
+            or model_data.get("supports_video_input")
+        ) else 0.0
+
+        # tool：function_calling 与 tool_choice 二选一（避免重复计分），再加结构化输出
+        tool_pts = 0.0
+        if model_data.get("supports_function_calling") or model_data.get("supports_tool_choice"):
+            tool_pts += 8.0
+        if model_data.get("supports_response_schema"):
+            tool_pts += 7.0
+
+        # reasoning
+        reasoning_pts = 10.0 if model_data.get("supports_reasoning") else 0.0
+
+        # coverage：provider_count 越多覆盖越高，5 家及以上取满分
+        coverage_pts = min(provider_count, 5) / 5.0 * 30
+
+        # free：仅对按 token 计价的文本/多模态模型生效，图像/音频类模型跳过
+        mode = model_data.get("mode", "")
+        if mode in ("image_generation", "audio_transcription", "audio_speech", "embedding"):
+            free_pts = 0.0
+        else:
+            try:
+                in_cost = float(model_data.get("input_cost_per_token") or 0)
+                out_cost = float(model_data.get("output_cost_per_token") or 0)
+            except (TypeError, ValueError):
+                in_cost = out_cost = 0.0
+            free_pts = 10.0 if (in_cost == 0 and out_cost == 0) else 0.0
+
+        score = round(
+            context_pts + multimodal_pts + tool_pts + reasoning_pts
+            + coverage_pts + free_pts
+        )
+        return max(0, min(score, 100))
+
+    def _parse_model(self, model_key: str, model_data: dict, provider_count: int = 1) -> dict | None:
         """将 LiteLLM 模型数据转换为 spider_ai_models 表结构
 
         Args:
-            model_key: 模型 ID（如 'gpt-4', 'claude-3-opus' 等）
+            model_key: 模型 ID（如 'gpt-4', 'claude-3-opus'、'azure/gpt-4o' 等）
             model_data: LiteLLM 中的模型数据字典
+            provider_count: 该基模型被多少家提供商支持（用于 composite_score）
 
         Returns:
             符合 spider_ai_models 表结构的字典，或 None（解析失败时）
@@ -240,21 +442,11 @@ class LiteLLMSpider(SpiderBase):
             # 提取多模态支持
             multimodal = bool(model_data.get("supports_vision", False))
 
+            # 综合评分
+            composite_score = self._compute_composite_score(model_data, provider_count)
+
             # 构建模型数据（description 和 strengths 留空，等后续 AI 生成）
             model_slug = model_key.lower().replace("/", "-").replace(":", "-")
-            ##TODO 新增hotness
-            '''
-            hotness = (
-                provider_count * 10           # 多少个提供商提供此模型
-                + min(log2(context_window) * 2, 20)  # 上下文越长分越高
-                + vision_score * 3            # supports_vision=True +3
-                + function_calling * 2        # +2
-                + tool_choice * 2             # +2
-                + reasoning * 3               # +3
-                + free_tier * 10              # 免费 +10
-                - deprecation_penalty         # 已废弃 -50
-            )
-            '''
             model = {
                 "id": model_key,
                 "name": name,
@@ -273,6 +465,7 @@ class LiteLLMSpider(SpiderBase):
                 "released": None,
                 "url": self._build_model_url(provider, model_key),
                 "free_tier": "",
+                "composite_score": composite_score,
                 "updated_at": datetime.now().strftime("%Y-%m-%d")
             }
 
@@ -345,11 +538,15 @@ class LiteLLMSpider(SpiderBase):
                     return [formatted + t_lower[len(abbr):]]
             if tok.isdigit():
                 return [tok]
+            # 数字在前字母在后（35b -> 35 B）
             m = re.match(r"^(\d+)([a-z]+)$", tok)
             if m:
                 suffix = m.group(2).upper()
                 if suffix in _NUM_SUFFIXES or len(suffix) == 1 and suffix in "BKMT":
                     return [m.group(1), suffix]
+            # 字母在前数字在后的混合结构（a3b -> A3B，整体大写不拆分）
+            if re.match(r"^([a-z]+)\d+[a-z]+$", tok):
+                return [tok.upper()]
             return [tok.capitalize()]
 
         # 需要剥离的地域/区域前缀
@@ -358,7 +555,9 @@ class LiteLLMSpider(SpiderBase):
             "us-gov-west", "us-gov-east",
         ])
 
-        name = re.sub(r"[-_:/\\.]+", " ", name_base)
+        # 仅替换分隔符，保留小数点（避免将 3.7 拆成 3 7）
+        name = re.sub(r"[-_:/\\]+", " ", name_base)
+        # 数字→大写字母之间插入空格（如 GPT4→GPT 4，但不破坏 qwen3.7）
         name = re.sub(r"(\d)([A-Z])", r"\1 \2", name)
 
         parts = [p for p in name.split() if p]
@@ -400,9 +599,10 @@ class LiteLLMSpider(SpiderBase):
     def _build_model_url(self, provider: str, model_key: str) -> str:
         """根据 provider 和 model_key 构造官方文档 URL
 
-        支持两种模式：
+        支持三种模式，按优先级从低到高：
         1. PROVIDER_URL_MAP 中有模板的，直接替换 {slug}
-        2. 否则查 PROVIDER_URL_FORMAT，按 pattern 特殊处理 model_key（如 OpenRouter、DeepInfra 等）
+        2. 否则查 PROVIDER_URL_FORMAT，按 pattern 特殊处理 model_key
+        3. 以上均无匹配时，查 PROVIDER_FALLBACK_URLS 兜底
         """
         # 大小写不敏感查找 PROVIDER_URL_MAP
         template = next(
@@ -417,38 +617,35 @@ class LiteLLMSpider(SpiderBase):
             (v for k, v in self.PROVIDER_URL_FORMAT.items() if k.lower() == provider.lower()),
             {},
         )
-        if not fmt:
-            return ""
+        if fmt:
+            base = fmt.get("base", "")
+            pattern = fmt.get("pattern", "")
+            if not base:
+                pass  # base 为空，继续尝试兜底
+            elif pattern == "model":
+                # OpenRouter: /model/{author}/{model_name}
+                key = self._strip_provider_prefix(model_key, provider)
+                return f"{base}/model/{key}" if key else base
+            elif pattern == "owner/model":
+                # DeepInfra: /{owner}/{model_name}
+                key = self._strip_provider_prefix(model_key, provider)
+                return f"{base}/{key}" if "/" in key else base
+            elif pattern == "models/{provider}/{slug}":
+                # Fal AI: /models/{provider}/{model_id}
+                return f"{base}/models/{key}" if (key := self._strip_provider_prefix(model_key, provider)) else base
+            elif pattern == "models":
+                # Replicate: /{owner}/{model_name}
+                return f"{base}/{model_key}" if "/" in model_key else f"{base}/models"
+            else:
+                # list 类型：直接返回基础 URL
+                return base
 
-        base = fmt.get("base", "")
-        pattern = fmt.get("pattern", "")
-        if not base:
-            return ""
-
-        # 对需要剥离 provider 前缀的平台处理 key
-        if pattern in ("model", "owner/model", "models"):
-            key = self._strip_provider_prefix(model_key, provider)
-        else:
-            key = model_key
-
-        if pattern == "model":
-            # OpenRouter: /model/{author}/{model_name}
-            return f"{base}/model/{key}" if key else base
-
-        if pattern == "owner/model":
-            # DeepInfra: /{owner}/{model_name}
-            return f"{base}/{key}" if "/" in key else base
-
-        if pattern == "models/{provider}/{slug}":
-            # Fal AI: /models/{provider}/{model_id}
-            return f"{base}/models/{key}"
-
-        if pattern == "models":
-            # Replicate: /{owner}/{model_name}
-            return f"{base}/{key}" if "/" in key else f"{base}/models"
-
-        # list 类型：直接返回基础 URL
-        return base
+        # 兜底：PROVIDER_FALLBACK_URLS
+        fallback = next(
+            (v for k, v in self.PROVIDER_FALLBACK_URLS.items() if k.lower() == provider.lower()),
+            "",
+        )
+        return fallback
 
     def _infer_category(self, model_key: str, model_data: dict) -> str:
         """推断模型类别

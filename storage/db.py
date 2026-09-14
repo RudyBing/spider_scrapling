@@ -5,6 +5,7 @@ DATABASE_URL 以 sqlite:// 开头时自动使用 SQLite，无需安装 PostgreSQ
 from __future__ import annotations
 
 import os
+import re
 from loguru import logger
 
 # ---- 根据 DATABASE_URL 选择后端 ----
@@ -249,38 +250,38 @@ async def update_last_crawled(conn, site_id: int):
 async def insert_news(conn, news: dict):
     """插入或更新新闻数据到 spider_news 表"""
     import json
-    
+
     tags_val = news.get("tags")
     if isinstance(tags_val, (list, dict)):
         tags_val = json.dumps(tags_val, ensure_ascii=False)
-    
+
     related_val = news.get("related_models")
     if isinstance(related_val, (list, dict)):
         related_val = json.dumps(related_val, ensure_ascii=False)
-    
+
     if _USE_SQLITE:
         existing = await conn.fetchrow(
             "SELECT id FROM spider_news WHERE original_url = ?", news["original_url"]
         )
         if existing:
             await conn.execute("""
-                UPDATE spider_news SET 
-                    title = ?, content = ?, 
-                    category = ?, tags = ?, related_models = ?, sentiment = ?, 
+                UPDATE spider_news SET
+                    title = ?, content = ?,
+                    category = ?, tags = ?, related_models = ?, sentiment = ?,
                     hotness = ?, language = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE original_url = ?
-            """, news.get("title"), news.get("content"), 
+            """, news.get("title"), news.get("content"),
                 news.get("category", "行业动态"), tags_val, related_val,
                 news.get("sentiment", "neutral"), news.get("hotness", 50),
                 news.get("language", "en"), news["original_url"])
         else:
             await conn.execute("""
                 INSERT INTO spider_news (
-                    id, slug, title, content, source, original_url, 
+                    id, slug, title, content, source, original_url,
                     published_at, category, tags, related_models,
                     sentiment, hotness, language
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, news.get("id"), news.get("slug"), news.get("title"), news.get("content"), 
+            """, news.get("id"), news.get("slug"), news.get("title"), news.get("content"),
                 news.get("source"), news["original_url"], news.get("published_at"),
                 news.get("category", "行业动态"), tags_val, related_val,
                 news.get("sentiment", "neutral"), news.get("hotness", 50),
@@ -303,7 +304,7 @@ async def insert_news(conn, news: dict):
                 hotness = EXCLUDED.hotness,
                 language = EXCLUDED.language,
                 updated_at = CURRENT_TIMESTAMP
-        """, news.get("id"), news.get("slug"), news.get("title"), news.get("content"), 
+        """, news.get("id"), news.get("slug"), news.get("title"), news.get("content"),
             news.get("source"), news["original_url"], news.get("published_at"),
             news.get("category", "行业动态"), tags_val, related_val,
             news.get("sentiment", "neutral"), news.get("hotness", 50),
@@ -338,145 +339,216 @@ async def update_news_translation(conn, news_id: str, title_cn: str, content_cn:
 
 
 # ==================== spider_ai_models 表操作函数 ====================
+# 字段分为两类：
+# ALWAYS_COLS：采集核心字段，必须有值、始终覆盖写（保持数据新鲜）。
+# OPTIONAL_COLS：可能由其他数据源或 AI 任务生成，只在该字段"有值"时才写入，
+#                为空值时不写不覆盖，避免清掉库中已有的准确内容。
+ALWAYS_COLS = [
+    "name", "slug", "category", "pricing_input",
+    "pricing_output", "context_window", "multimodal", "composite_score",
+    "updated_at",
+]
+OPTIONAL_COLS = [
+    "logo", "provider", "pricing_unit", "description", "strengths", "benchmark_score",
+    "released", "url", "free_tier",
+]
+
+
+def _is_filled(value) -> bool:
+    """判断字段是否为"有值"状态（None/空串/空集合视为无值）"""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, dict, set)):
+        return len(value) > 0
+    return True
+
+
+def _normalize_id_for_match(id_str: str) -> str:
+    """归一化模型 ID，用于跨格式匹配（litellm 点号 ↔ openrouter 斜杠）。
+
+    处理规则（严格按顺序）：
+    1. 小写化，统一分隔符为 `-`
+    2. 首段 provider 别名标准化（单向映射到标准名，确保不同写法结果一致）
+       - google ↔ gemini（统一为 google）
+       - mistralai ↔ mistral（统一为 mistral）
+       - azure_ai ↔ azure-ai（统一为 azure_ai）
+       - x-ai ↔ xai（统一为 xai）
+    3. 去除第二段中重复的 provider 名（用 alias 后的标准名）
+       例：google/gemini-2.5-flash → google-2-5-flash
+           deepseek/deepseek-chat-v3 → deepseek-chat-v3
+           meta-llama/Meta-Llama-3.1-70B → meta-llama-3-1-70b
+           anthropic/claude-3-opus → anthropic-claude-3-opus（不去重）
+    4. 剥离 Bedrock/Vertex 风格版本后缀（-v数字:数字，如 -v1:0）
+       注：deepseek-chat-v3 中的 -v3 是型号标识，不剥离
+    """
+    # 已知 provider 别名表（key=任意写法，value=标准名）
+    # 用于：① 无 / 分隔符时识别 bare 格式的 provider 别名
+    #       ② 去重时正确识别多连字符 provider（如 meta-llama）
+    _PROVIDER_ALIASES = {
+        "google", "gemini",
+        "mistralai", "mistral",
+        "azure_ai", "azure-ai",
+        "x-ai", "xai",
+        # 常见 provider（完整列表，用于多连字符识别）
+        "anthropic", "openai", "deepseek", "meta-llama", "meta",
+        "cohere", "fireworks", "together", "groq", "nvidia",
+        "novita", "perplexity", "yi", "qwen", "dashscope",
+        "sambanova", "zhipu", "baidu", "junjie",
+    }
+    # 标准别名映射（首段 only）
+    _STANDARD_ALIASES = {
+        "gemini": "google",
+        "mistralai": "mistral",
+        "azure_ai": "azure-ai",
+        "xai": "x-ai",
+    }
+
+    s = id_str.lower()
+    # 先将版本号小数点替换为 -（如 2.5→2-5，3.1→3-1），避免其干扰后续分隔符检测
+    s = re.sub(r"(?<=\d)\.(?=\d)", "-", s)
+    # 再按第一个 / 或 . 定位第一段 provider（此时 . 只在原本就是分隔符的位置出现）
+    _sep_positions = [(s.find(c), c) for c in "/."] if s else []
+    sep_idx, sep_char = min(((i, c) for i, c in _sep_positions if i >= 0), default=(-1, ""))
+    orig_prefix = s[:sep_idx] if sep_idx >= 0 else ""
+
+    # ---- 步骤1：首段 alias 标准化 ----
+    # 用 _PROVIDER_ALIASES 反查：若 orig_prefix 是某个标准名的别名，则用标准名
+    alias_prefix = _STANDARD_ALIASES.get(orig_prefix, orig_prefix)
+    if sep_idx >= 0:
+        s = alias_prefix + "-" + s[sep_idx + 1:]
+    else:
+        # 无分隔符时：检查整个 ID 是否是 provider 别名（如 gemini → google）
+        # 策略：取 s 的第一个 token（按 - 分割），若在别名表中则替换首段
+        first_token_end = s.find("-")
+        if first_token_end >= 0:
+            first_token = s[:first_token_end]
+            mapped = _STANDARD_ALIASES.get(first_token, first_token)
+            if mapped != first_token:
+                s = mapped + s[first_token_end:]
+        else:
+            s = _STANDARD_ALIASES.get(s, s)
+
+    # ---- 步骤2：去除第二段中重复的 provider 名 ----
+    if sep_idx >= 0:
+        std_prefix = alias_prefix  # alias 后的标准名
+        rest_lower = s[len(std_prefix) + 1:]  # 去掉 "std_prefix-"
+        # 用 _PROVIDER_ALIASES 从已知 provider 列表中匹配第二段首段
+        # 策略：按长度降序尝试匹配（优先匹配长的，如 meta-llama 而非 meta）
+        matched_rest_prefix = ""
+        for candidate in sorted(_PROVIDER_ALIASES, key=len, reverse=True):
+            if rest_lower.startswith(candidate + "-") or rest_lower == candidate:
+                matched_rest_prefix = candidate
+                break
+        if matched_rest_prefix:
+            # 将匹配的 provider 名也做 alias 映射
+            aliased_rest = _STANDARD_ALIASES.get(matched_rest_prefix, matched_rest_prefix)
+            if aliased_rest == std_prefix:
+                suffix = rest_lower[len(matched_rest_prefix):]  # 去掉匹配的 provider 名
+                if suffix.startswith("-"):
+                    suffix = suffix[1:]
+                s = std_prefix + "-" + suffix if suffix else std_prefix
+
+    # ---- 步骤3：剥离版本号后缀 ----
+    s = re.sub(r"-v\d+:\d+$", "", s)       # Bedrock/Vertex 风格 -v1:0
+    s = re.sub(r"@[\d]+", "", s)           # @时间戳
+    s = re.sub(r":[\d]+$", "", s)          # 结尾 :数字
+
+    return s.strip("-")
+
+
 async def insert_ai_model(conn, model: dict):
     """插入或更新 AI 模型数据到 spider_ai_models 表
-    
+
+    写入策略（insert 与 update 一致，都只写"有值的字段"）：
+    - ALWAYS_COLS：采集核心字段，始终写入（保证价格/上下文等数据新鲜）。
+    - OPTIONAL_COLS：仅当本次采集提供了值才写入（如 openrouter 的 description/benchmark_score/released）；若本次没提供值
+      （None/空串/空数组），则 update 时保留库中原值、insert 时不写入该列，
+      避免覆盖 AI 或其他数据源已生成的内容。
+
+    id/slug 匹配：精确匹配 + 跨格式归一化匹配。
+    litellm（点号分隔，如 "anthropic.claude-3-opus"）与 openrouter（斜杠分隔，如 "anthropic/claude-3-opus"）
+    通过 _normalize_id_for_match() 归一化后比对，匹配成功则 UPDATE，否则 INSERT。
+    同一模型在不同 provider 路径下（如 litellm 的 "azure/deepseek-v3" 与 openrouter 的 "deepseek/deepseek-chat"）
+    会各自保留为独立记录，确保数据不被错误覆盖。
+
     Args:
         conn: 数据库连接
-        model: AI 模型数据字典，包含以下字段：
-            - id: 模型 ID（如 'gpt-4'）
-            - name: 模型名称
-            - slug: URL 友好的标识符
-            - provider: 提供商名称
-            - logo: Logo URL（可为空）
-            - description: 描述（留空，等 AI 生成）
-            - category: 类别
-            - pricing_input: 输入价格
-            - pricing_output: 输出价格
-            - pricing_unit: 价格单位
-            - context_window: 上下文窗口
-            - multimodal: 是否多模态
-            - strengths: 优势列表（留空，等 AI 生成）
-            - benchmark_score: 基准分数（可为 None）
-            - released: 发布日期（可为 None）
-            - url: 官方 URL
-            - free_tier: 免费层级信息
-            - updated_at: 更新时间
+        model: AI 模型数据字典
     """
-    import json
-    
-    # 处理 strengths 字段（数组转 JSON 字符串）
-    strengths_val = model.get("strengths", [])
-    if _USE_SQLITE:
-        if isinstance(strengths_val, list):
-            strengths_val = json.dumps(strengths_val, ensure_ascii=False)
-    
-    if _USE_SQLITE:
-        # SQLite 实现
-        existing = await conn.fetchrow(
-            "SELECT id FROM spider_ai_models WHERE id = ? OR slug = ?",
-            model.get("id"), model.get("slug")
-        )
-        if existing:
-            # 更新已存在的模型
-            await conn.execute("""
-                UPDATE spider_ai_models SET
-                    id = ?, name = ?, slug = ?, provider = ?, logo = ?,
-                    description = ?, category = ?, pricing_input = ?,
-                    pricing_output = ?, pricing_unit = ?, context_window = ?,
-                    multimodal = ?, strengths = ?, benchmark_score = ?,
-                    released = ?, url = ?, free_tier = ?,
-                    updated_at = ?
-                WHERE id = ? OR slug = ?
-            """, model.get("id"), model.get("name"), model.get("slug"), model.get("provider"),
-                model.get("logo", ""), model.get("description", ""),
-                model.get("category"), model.get("pricing_input"),
-                model.get("pricing_output"), model.get("pricing_unit", ""),
-                model.get("context_window"), model.get("multimodal", False),
-                strengths_val, model.get("benchmark_score"),
-                model.get("released"), model.get("url", ""),
-                model.get("free_tier", ""), model.get("updated_at"),
-                model.get("id"), model.get("slug"))
-        else:
-            # 插入新模型
-            await conn.execute("""
-                INSERT INTO spider_ai_models (
-                    id, name, slug, provider, logo, description,
-                    category, pricing_input, pricing_output, pricing_unit,
-                    context_window, multimodal, strengths, benchmark_score,
-                    released, url, free_tier, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, model.get("id"), model.get("name"), model.get("slug"),
-                model.get("provider"), model.get("logo", ""),
-                model.get("description", ""), model.get("category"),
-                model.get("pricing_input"), model.get("pricing_output"),
-                model.get("pricing_unit", ""), model.get("context_window"),
-                model.get("multimodal", False), strengths_val,
-                model.get("benchmark_score"), model.get("released"),
-                model.get("url", ""), model.get("free_tier", ""),
-                model.get("updated_at"))
-    else:
-        # PostgreSQL 实现
-        # 先查询是否已存在（按 id 或 slug）
-        existing = await conn.fetchrow(
-            "SELECT id FROM spider_ai_models WHERE id = $1 OR slug = $2",
-            model.get("id"), model.get("slug")
-        )
-        if existing:
-            # 更新已存在的记录
-            await conn.execute("""
-                UPDATE spider_ai_models SET
-                    name = $1, slug = $2, provider = $3, logo = $4,
-                    description = $5, category = $6, pricing_input = $7,
-                    pricing_output = $8, pricing_unit = $9, context_window = $10,
-                    multimodal = $11, strengths = $12, benchmark_score = $13,
-                    released = $14, url = $15, free_tier = $16,
-                    updated_at = $17
-                WHERE id = $18 OR slug = $19
-            """, model.get("name"), model.get("slug"), model.get("provider"),
-                model.get("logo", ""), model.get("description", ""),
-                model.get("category"), model.get("pricing_input"),
-                model.get("pricing_output"), model.get("pricing_unit", ""),
-                model.get("context_window"), model.get("multimodal", False),
-                strengths_val, model.get("benchmark_score"),
-                model.get("released"), model.get("url", ""),
-                model.get("free_tier", ""), model.get("updated_at"),
-                model.get("id"), model.get("slug"))
-        else:
-            # 插入新记录
-            await conn.execute("""
-                INSERT INTO spider_ai_models (
-                    id, name, slug, provider, logo, description,
-                    category, pricing_input, pricing_output, pricing_unit,
-                    context_window, multimodal, strengths, benchmark_score,
-                    released, url, free_tier, updated_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-                ON CONFLICT (slug) DO UPDATE SET
-                    id = EXCLUDED.id,
-                    name = EXCLUDED.name,
-                    slug = EXCLUDED.slug,
-                    provider = EXCLUDED.provider,
-                    logo = EXCLUDED.logo,
-                    description = EXCLUDED.description,
-                    category = EXCLUDED.category,
-                    pricing_input = EXCLUDED.pricing_input,
-                    pricing_output = EXCLUDED.pricing_output,
-                    pricing_unit = EXCLUDED.pricing_unit,
-                    context_window = EXCLUDED.context_window,
-                    multimodal = EXCLUDED.multimodal,
-                    strengths = EXCLUDED.strengths,
-                    benchmark_score = EXCLUDED.benchmark_score,
-                    released = EXCLUDED.released,
-                    url = EXCLUDED.url,
-                    free_tier = EXCLUDED.free_tier,
-                    updated_at = EXCLUDED.updated_at
-            """, model.get("id"), model.get("name"), model.get("slug"),
-                model.get("provider"), model.get("logo", ""),
-                model.get("description", ""), model.get("category"),
-                model.get("pricing_input"), model.get("pricing_output"),
-                model.get("pricing_unit", ""), model.get("context_window"),
-                model.get("multimodal", False), strengths_val,
-                model.get("benchmark_score"), model.get("released"),
-                model.get("url", ""), model.get("free_tier", ""),
-                model.get("updated_at"))
+    always_cols = list(ALWAYS_COLS)
+    always_vals = [model.get(c) for c in always_cols]
 
+    # 仅收集"有值"的可选字段
+    opt_cols = []
+    opt_vals = []
+    for col in OPTIONAL_COLS:
+        v = model.get(col)
+        if _is_filled(v):
+            opt_cols.append(col)
+            opt_vals.append(v)
+
+    existing_id = model.get("id")
+    existing_slug = model.get("slug")
+    new_norm_id = _normalize_id_for_match(existing_id)
+    new_norm_slug = _normalize_id_for_match(existing_slug)
+
+    # 查找已有记录：先精确匹配，未命中再归一化跨格式匹配
+    existing = await conn.fetchrow(
+        f"SELECT id FROM spider_ai_models WHERE id = {'?' if _USE_SQLITE else '$1'} "
+        f"OR slug = {'?' if _USE_SQLITE else '$2'}",
+        existing_id, existing_slug,
+    )
+    if not existing:
+        rows = await conn.fetch(
+            f"SELECT id, slug FROM spider_ai_models"
+        )
+        for row in rows:
+            if _normalize_id_for_match(row["id"]) == new_norm_id or \
+               _normalize_id_for_match(row["slug"]) == new_norm_slug:
+                existing = row
+                break
+
+    if existing:
+        # UPDATE：写 ALWAYS_COLS + 有值的 OPTIONAL_COLS
+        set_cols = list(always_cols)
+        set_vals = list(always_vals)
+        for col, val in zip(opt_cols, opt_vals):
+            set_cols.append(col)
+            set_vals.append(val)
+        if _USE_SQLITE:
+            updates = ", ".join(f"{c} = ?" for c in set_cols)
+            await conn.execute(
+                f"UPDATE spider_ai_models SET {updates} WHERE id = ? OR slug = ?",
+                *set_vals, existing_id, existing_slug,
+            )
+        else:
+            updates = ", ".join(f"{c} = ${i + 1}" for i, c in enumerate(set_cols))
+            where_idx = len(set_vals) + 1
+            await conn.execute(
+                f"UPDATE spider_ai_models SET {updates} "
+                f"WHERE id = ${where_idx} OR slug = ${where_idx + 1}",
+                *set_vals, existing_id, existing_slug,
+            )
+    else:
+        # INSERT：不含 id 的列写入 ALWAYS_COLS + 有值的 OPTIONAL_COLS
+        cols = ["id"] + list(always_cols) + opt_cols
+        vals = [existing_id] + list(always_vals) + opt_vals
+        if _USE_SQLITE:
+            placeholders = ", ".join("?" for _ in vals)
+            await conn.execute(
+                f"INSERT INTO spider_ai_models ({', '.join(cols)}) "
+                f"VALUES ({placeholders})",
+                *vals
+            )
+        else:
+            placeholders = ", ".join(f"${i + 1}" for i in range(len(vals)))
+            conflict_cols = [c for c in cols if c != "id"]
+            conflict_updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in conflict_cols)
+            await conn.execute(
+                f"INSERT INTO spider_ai_models ({', '.join(cols)}) "
+                f"VALUES ({placeholders}) "
+                f"ON CONFLICT (slug) DO UPDATE SET {conflict_updates}",
+                *vals
+            )
