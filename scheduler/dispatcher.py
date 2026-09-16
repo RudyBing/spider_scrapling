@@ -7,6 +7,10 @@ from spiders.litellm import SPIDER_REGISTRY as LLM_REGISTRY
 from spiders.openrouter import SPIDER_REGISTRY as OR_REGISTRY
 from spiders.techcrunch import SPIDER_REGISTRY as TC_REGISTRY
 from spiders.technologyreview import SPIDER_REGISTRY as TR_REGISTRY
+from spiders.theverge import SPIDER_REGISTRY as TV_REGISTRY
+from spiders.venturebeat import SPIDER_REGISTRY as VB_REGISTRY
+from spiders.qbitai import SPIDER_REGISTRY as QB_REGISTRY
+from spiders.wired import SPIDER_REGISTRY as WIRED_REGISTRY
 
 # 合并所有 spider registry
 SPIDER_REGISTRY = {
@@ -14,6 +18,10 @@ SPIDER_REGISTRY = {
     **OR_REGISTRY,
     **TC_REGISTRY,
     **TR_REGISTRY,
+    **TV_REGISTRY,
+    **VB_REGISTRY,
+    **QB_REGISTRY,
+    **WIRED_REGISTRY,
 }
 
 # AI 模型数据源（其数据入库到 spider_ai_models 表，而非 spider_news）

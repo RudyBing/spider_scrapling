@@ -8,3 +8,11 @@ sites:
   - name: "techcrunch"
   # # MIT Technology Review 新闻
   - name: "technologyreview"
+  # The Verge 新闻
+  - name: "theverge"
+  # VentureBeat AI新闻
+  - name: "venturebeat"
+  # 量子位 AI新闻
+  - name: "qbitai"
+  # WIRED AI新闻
+  - name: "wired"
