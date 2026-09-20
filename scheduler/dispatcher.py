@@ -11,6 +11,7 @@ from spiders.theverge import SPIDER_REGISTRY as TV_REGISTRY
 from spiders.venturebeat import SPIDER_REGISTRY as VB_REGISTRY
 from spiders.qbitai import SPIDER_REGISTRY as QB_REGISTRY
 from spiders.wired import SPIDER_REGISTRY as WIRED_REGISTRY
+from spiders.openai import SPIDER_REGISTRY as OAI_REGISTRY
 
 # 合并所有 spider registry
 SPIDER_REGISTRY = {
@@ -22,6 +23,7 @@ SPIDER_REGISTRY = {
     **VB_REGISTRY,
     **QB_REGISTRY,
     **WIRED_REGISTRY,
+    **OAI_REGISTRY,
 }
 
 # AI 模型数据源（其数据入库到 spider_ai_models 表，而非 spider_news）

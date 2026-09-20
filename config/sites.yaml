@@ -4,15 +4,15 @@ sites:
   - name: "litellm"
   # OpenRouter AI 模型数据
   - name: "openrouter"
-  # # TechCrunch AI 新闻
+  # TechCrunch AI 新闻
   - name: "techcrunch"
-  # # MIT Technology Review 新闻
-  - name: "technologyreview"
   # The Verge 新闻
   - name: "theverge"
   # VentureBeat AI新闻
   - name: "venturebeat"
   # 量子位 AI新闻
   - name: "qbitai"
-  # WIRED AI新闻
+  # # WIRED AI新闻
   - name: "wired"
+  # OpenAI Blog
+  - name: "openai"
