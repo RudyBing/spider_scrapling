@@ -72,6 +72,7 @@ class TheVergeSpider(SpiderBase):
         news_data = {
             "id": news_id,
             "slug": slug,
+            "site": "aimodelprice",
             "title": title,
             "content": content,
             "source": self.name,
@@ -115,7 +116,7 @@ class TheVergeSpider(SpiderBase):
                         if news_data:
                             all_news.append(news_data)
                             if news_data.get("published_at"):
-                                end_date = datetime.now() - timedelta(days=30)
+                                end_date = datetime.now() - timedelta(days=7)
                                 naive_published = news_data["published_at"].replace(tzinfo=None)
                                 if naive_published < end_date:
                                     logger.info(f"page {page_num} news published_at = {news_data['published_at']}")

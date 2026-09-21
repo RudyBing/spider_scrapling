@@ -2,7 +2,7 @@
 import asyncio
 from loguru import logger
 from config import load_settings, load_sites
-from storage.db import get_pool, insert_site, insert_news, insert_ai_model, update_last_crawled
+from storage.db import get_pool, insert_site, insert_news_batch, insert_ai_model, update_last_crawled
 from spiders.litellm import SPIDER_REGISTRY as LLM_REGISTRY
 from spiders.openrouter import SPIDER_REGISTRY as OR_REGISTRY
 from spiders.techcrunch import SPIDER_REGISTRY as TC_REGISTRY
@@ -94,8 +94,7 @@ class Crawler:
                     await insert_ai_model(conn, item)
                 logger.info(f"[{name}] 成功保存 {len(items)} 个 AI 模型到 spider_ai_models 表")
             else:
-            # 入库新闻数据
-                for item in items:
-                    await insert_news(conn, item)
+            # 入库新闻数据（批量写入，单次网络往返）
+                await insert_news_batch(conn, items)
                 await update_last_crawled(conn, site_id)
                 logger.info(f"[{name}] 成功保存 {len(items)} 条新闻到 spider_news 表")

@@ -12,7 +12,7 @@ sites:
   - name: "venturebeat"
   # 量子位 AI新闻
   - name: "qbitai"
-  # # WIRED AI新闻
+  # WIRED AI新闻
   - name: "wired"
   # OpenAI Blog
   - name: "openai"

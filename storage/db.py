@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import re
+import json
 from loguru import logger
 
 # ---- 根据 DATABASE_URL 选择后端 ----
@@ -22,6 +23,7 @@ else:
 CREATE TABLE IF NOT EXISTS spider_news (
     id VARCHAR(32) NOT NULL,
     slug VARCHAR(256) NOT NULL,
+    site VARCHAR(128),
     title VARCHAR(512) NOT NULL,
     title_cn VARCHAR(512),
     content TEXT,
@@ -50,6 +52,7 @@ CREATE INDEX IF NOT EXISTS idx_category ON spider_news (category);
 CREATE INDEX IF NOT EXISTS idx_hotness ON spider_news (hotness);
 CREATE INDEX IF NOT EXISTS idx_sentiment ON spider_news (sentiment);
 CREATE INDEX IF NOT EXISTS idx_language ON spider_news (language);
+CREATE INDEX IF NOT EXISTS idx_site ON spider_news (site);
     """
 # ---- SQLite 状态 ----
 _sqlite_db: aiosqlite.Connection | None = None
@@ -202,39 +205,6 @@ async def insert_site(conn, site: dict):
                 site.get("schedule_interval", "daily"))
 
 
-async def insert_item(conn, site_id: int, item: dict):
-    extra_val = item.get("extra", {})
-    if isinstance(extra_val, dict):
-        extra_val = str(extra_val)
-
-    if _USE_SQLITE:
-        await conn.execute("""
-            INSERT INTO crawled_items (site_id, url, title, content, author,
-                                       published_at, extra_data, raw_html)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (site_id, url) DO UPDATE SET
-                title = EXCLUDED.title,
-                content = EXCLUDED.content,
-                extra_data = EXCLUDED.extra_data,
-                fetched_at = NOW()
-        """, site_id, item["url"], item.get("title"), item.get("content"),
-             item.get("author"), item.get("published_at"),
-             extra_val, item.get("raw_html", "")[:50000])
-    else:
-        await conn.execute("""
-            INSERT INTO crawled_items (site_id, url, title, content, author,
-                                       published_at, extra_data, raw_html)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            ON CONFLICT (site_id, url) DO UPDATE SET
-                title = EXCLUDED.title,
-                content = EXCLUDED.content,
-                extra_data = EXCLUDED.extra_data,
-                fetched_at = NOW()
-        """, site_id, item["url"], item.get("title"), item.get("content"),
-             item.get("author"), item.get("published_at"),
-             extra_val, item.get("raw_html", "")[:50000])
-
-
 async def update_last_crawled(conn, site_id: int):
     if _USE_SQLITE:
         await conn.execute(
@@ -247,17 +217,24 @@ async def update_last_crawled(conn, site_id: int):
 
 
 # ==================== spider_news 表操作函数 ====================
-async def insert_news(conn, news: dict):
-    """插入或更新新闻数据到 spider_news 表"""
-    import json
+CONTENT_MAX_LEN = 3000  # 入库前截断 content 的最大长度，减少数据库传输量
 
+
+def _prepare_news_fields(news: dict) -> tuple:
+    """预处理新闻字段：截断 content、序列化 JSON 字段"""
+    content = (news.get("content") or "")[:CONTENT_MAX_LEN]
     tags_val = news.get("tags")
     if isinstance(tags_val, (list, dict)):
         tags_val = json.dumps(tags_val, ensure_ascii=False)
-
     related_val = news.get("related_models")
     if isinstance(related_val, (list, dict)):
         related_val = json.dumps(related_val, ensure_ascii=False)
+    return content, tags_val, related_val
+
+
+async def insert_news(conn, news: dict):
+    """插入或更新单条新闻数据到 spider_news 表"""
+    content, tags_val, related_val = _prepare_news_fields(news)
 
     if _USE_SQLITE:
         existing = await conn.fetchrow(
@@ -266,22 +243,22 @@ async def insert_news(conn, news: dict):
         if existing:
             await conn.execute("""
                 UPDATE spider_news SET
-                    title = ?, content = ?,
+                    title = ?, content = ?, site = ?,
                     category = ?, tags = ?, related_models = ?, sentiment = ?,
                     hotness = ?, language = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE original_url = ?
-            """, news.get("title"), news.get("content"),
+            """, news.get("title"), content, news.get("site"),
                 news.get("category", "行业动态"), tags_val, related_val,
                 news.get("sentiment", "neutral"), news.get("hotness", 50),
                 news.get("language", "en"), news["original_url"])
         else:
             await conn.execute("""
                 INSERT INTO spider_news (
-                    id, slug, title, content, source, original_url,
+                    id, slug, site, title, content, source, original_url,
                     published_at, category, tags, related_models,
                     sentiment, hotness, language
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, news.get("id"), news.get("slug"), news.get("title"), news.get("content"),
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, news.get("id"), news.get("slug"), news.get("site"), news.get("title"), content,
                 news.get("source"), news["original_url"], news.get("published_at"),
                 news.get("category", "行业动态"), tags_val, related_val,
                 news.get("sentiment", "neutral"), news.get("hotness", 50),
@@ -289,13 +266,14 @@ async def insert_news(conn, news: dict):
     else:
         await conn.execute("""
             INSERT INTO spider_news (
-                id, slug, title, content,
+                id, slug, site, title, content,
                 source, original_url, published_at, category,
                 tags, related_models, sentiment, hotness, language
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             ON CONFLICT (original_url) DO UPDATE SET
                 title = EXCLUDED.title,
                 content = EXCLUDED.content,
+                site = EXCLUDED.site,
                 published_at = EXCLUDED.published_at,
                 category = EXCLUDED.category,
                 tags = EXCLUDED.tags,
@@ -304,11 +282,66 @@ async def insert_news(conn, news: dict):
                 hotness = EXCLUDED.hotness,
                 language = EXCLUDED.language,
                 updated_at = CURRENT_TIMESTAMP
-        """, news.get("id"), news.get("slug"), news.get("title"), news.get("content"),
+        """, news.get("id"), news.get("slug"), news.get("site"), news.get("title"), content,
             news.get("source"), news["original_url"], news.get("published_at"),
             news.get("category", "行业动态"), tags_val, related_val,
             news.get("sentiment", "neutral"), news.get("hotness", 50),
             news.get("language", "en"))
+
+
+async def insert_news_batch(conn, news_list: list[dict]):
+    """批量插入或更新新闻数据（PostgreSQL 单次往返，SQLite 逐条）
+
+    - PostgreSQL：拼接一条多行 INSERT ... ON CONFLICT 语句，减少网络往返。
+    - SQLite：因不支持多行 VALUES，改为逐条执行。
+    """
+    if not news_list:
+        return
+
+    prepared = [_prepare_news_fields(n) for n in news_list]
+
+    if _USE_SQLITE:
+        for news in news_list:
+            await insert_news(conn, news)
+        return
+
+    # PostgreSQL 批量路径：构造多行 INSERT ... ON CONFLICT
+    rows_sql_parts = []
+    all_vals = []
+    for i, (news, (content, tags_val, related_val)) in enumerate(zip(news_list, prepared)):
+        base = i * 14 + 1
+        rows_sql_parts.append(
+            f"(${base}, ${base+1}, ${base+2}, ${base+3}, ${base+4}, ${base+5}, "
+            f"${base+6}, ${base+7}, ${base+8}, ${base+9}, ${base+10}, ${base+11}, "
+            f"${base+12}, ${base+13})"
+        )
+        all_vals.extend([
+            news.get("id"), news.get("slug"), news.get("site"), news.get("title"), content,
+            news.get("source"), news["original_url"], news.get("published_at"),
+            news.get("category", "行业动态"), tags_val, related_val,
+            news.get("sentiment", "neutral"), news.get("hotness", 50),
+            news.get("language", "en"),
+        ])
+
+    await conn.execute(f"""
+        INSERT INTO spider_news (
+            id, slug, site, title, content, source, original_url,
+            published_at, category, tags, related_models,
+            sentiment, hotness, language
+        ) VALUES {', '.join(rows_sql_parts)}
+        ON CONFLICT (original_url) DO UPDATE SET
+            title = EXCLUDED.title,
+            content = EXCLUDED.content,
+            site = EXCLUDED.site,
+            published_at = EXCLUDED.published_at,
+            category = EXCLUDED.category,
+            tags = EXCLUDED.tags,
+            related_models = EXCLUDED.related_models,
+            sentiment = EXCLUDED.sentiment,
+            hotness = EXCLUDED.hotness,
+            language = EXCLUDED.language,
+            updated_at = CURRENT_TIMESTAMP
+    """, *all_vals)
 
 
 # ==================== 翻译相关函数 ====================
@@ -346,7 +379,7 @@ async def update_news_translation(conn, news_id: str, title_cn: str, content_cn:
 ALWAYS_COLS = [
     "name", "slug", "category", "pricing_input",
     "pricing_output", "context_window", "multimodal", "composite_score",
-    "updated_at",
+    "updated_at", "site"
 ]
 OPTIONAL_COLS = [
     "logo", "provider", "pricing_unit", "description", "strengths", "benchmark_score",

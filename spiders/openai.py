@@ -55,6 +55,7 @@ class OpenAISpider(SpiderBase):
         news_data = {
             "id": news_id,
             "slug": slug,
+            "site": "aimodelprice",
             "title": title,
             "content": content,
             "source": self.name,
@@ -74,7 +75,7 @@ class OpenAISpider(SpiderBase):
         import requests as sync_requests
 
         all_news = []
-        end_date = datetime.now() - timedelta(days=30)
+        end_date = datetime.now() - timedelta(days=7)
 
         logger.info(f"[{self.name}] 拉取 RSS：{self.rss_url}")
         try:

@@ -62,6 +62,7 @@ class TechnologyReviewSpider(SpiderBase):
         news_data = {
             "id": news_id,
             "slug": slug,
+            "site": "aimodelprice",
             "title": title,
             "content": content,
             "source": self.name,
@@ -105,7 +106,7 @@ class TechnologyReviewSpider(SpiderBase):
                 news_data = await self.parse(news_url)
                 if news_data:
                     all_news.append(news_data)
-                    end_date = (datetime.now()-timedelta(days=30)).strftime("%Y-%m-%d")
+                    end_date = (datetime.now()-timedelta(days=7)).strftime("%Y-%m-%d")
                     if str(news_data['published_at']) < str(end_date):
                         logger.info(f"page {page_num} parse news published_at = {news_data['published_at']}")
                         logger.info(f"[{self.name}] 共抓取 {len(all_news)} 条新闻")

@@ -2,13 +2,13 @@
 from .db import (
     get_pool,
     insert_site,
-    insert_item,
+    insert_news_batch,
     update_last_crawled,
 )
 
 __all__ = [
     "get_pool",
     "insert_site",
-    "insert_item",
+    "insert_news_batch",
     "update_last_crawled",
 ]

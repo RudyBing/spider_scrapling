@@ -174,6 +174,7 @@ class WiredSpider(SpiderBase):
         news_data = {
             "id": news_id,
             "slug": slug,
+            "site": "aimodelprice",
             "title": title,
             "content": content,
             "source": self.name,
@@ -194,7 +195,7 @@ class WiredSpider(SpiderBase):
     async def crawl(self) -> list[dict]:
         """通过 RSS 拉取文章链接，再逐一解析详情页"""
         all_news = []
-        end_date = datetime.now() - timedelta(days=30)
+        end_date = datetime.now() - timedelta(days=7)
 
         logger.info(f"[{self.name}] 拉取 RSS（{len(RSS_URLS)} 个源）")
         rss_items = await self._fetch_rss()

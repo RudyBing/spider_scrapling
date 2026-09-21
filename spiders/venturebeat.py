@@ -51,8 +51,8 @@ class VentureBeatSpider(SpiderBase):
     start_urls = [
         "https://venturebeat.com/ai/",
     ]
-    max_page = 20
-    algolia_hits_per_page = 20
+    max_page = 10
+    algolia_hits_per_page = 10
 
     # ===== Algolia 列表抓取 =====
 
@@ -158,6 +158,7 @@ class VentureBeatSpider(SpiderBase):
         news_data = {
             "id": news_id,
             "slug": slug,
+            "site": "aimodelprice",
             "title": title,
             "content": content,
             "source": self.name,
@@ -189,7 +190,7 @@ class VentureBeatSpider(SpiderBase):
         """翻页抓取：通过 Algolia API 分页获取文章链接，再逐一解析详情页"""
         all_news = []
         query = "ai"
-        end_date = datetime.now() - timedelta(days=30)
+        end_date = datetime.now() - timedelta(days=7)
 
         for page_num in range(0, self.max_page):
             logger.info(f"[{self.name}] Algolia 第 {page_num + 1} 页（skip={page_num * self.algolia_hits_per_page}）")

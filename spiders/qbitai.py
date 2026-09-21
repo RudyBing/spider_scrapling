@@ -36,7 +36,7 @@ class QbitAISpider(SpiderBase):
     start_urls = [
         "https://www.qbitai.com/",
     ]
-    max_page = 20
+    max_page = 10
 
     async def parse(self, url: str) -> dict | None:
         """解析新闻详情页，返回新闻数据字典"""
@@ -87,6 +87,7 @@ class QbitAISpider(SpiderBase):
         news_data = {
             "id": news_id,
             "slug": slug,
+            "site": "aimodelprice",
             "title": title,
             "content": content,
             "source": '量子位',
@@ -108,7 +109,7 @@ class QbitAISpider(SpiderBase):
     async def crawl(self) -> list[dict]:
         """翻页抓取：WordPress 传统分页 /page/{N}"""
         all_news = []
-        end_date = datetime.now() - timedelta(days=30)
+        end_date = datetime.now() - timedelta(days=7)
 
         for page_num in range(1, self.max_page + 1):
             current_url = f"https://www.qbitai.com/page/{page_num}" if page_num > 1 else self.start_urls[0]
